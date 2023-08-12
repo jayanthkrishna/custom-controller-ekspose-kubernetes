@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	appsinformers "k8s.io/client-go/informers/apps/v1"
 	"k8s.io/client-go/kubernetes"
@@ -33,8 +36,8 @@ func newController(clientSet kubernetes.Interface, deployInformer appsinformers.
 
 	deployInformer.Informer().AddEventHandler(
 		cache.ResourceEventHandlerFuncs{
-			AddFunc:    handleAdd,
-			DeleteFunc: handleDel,
+			AddFunc:    c.handleAdd,
+			DeleteFunc: c.handleDel,
 		},
 	)
 
@@ -57,15 +60,65 @@ func (c *controller) run(ch <-chan struct{}) {
 
 func (c *controller) worker() {
 
+	for c.processItem() {
+
+	}
+
 }
 
-func handleAdd(obj interface{}) {
+func (c *controller) processItem() bool {
+
+	item, shutdown := c.queue.Get()
+
+	if shutdown {
+		return false
+	}
+
+	key, err := cache.MetaNamespaceKeyFunc(item)
+
+	if err != nil {
+		fmt.Printf("Error getting key from cache : %s\n", err.Error())
+	}
+
+	ns, name, err := cache.SplitMetaNamespaceKey(key)
+
+	if err != nil {
+		fmt.Printf("Error splitting key into namespace and name : %s\n", err.Error())
+		return false
+	}
+
+	err = c.syncDeployment(ns, name)
+
+}
+
+func (c *controller) syncDeployment(ns, name string) error {
+
+	// create service
+	ctx := context.Background()
+
+	deployment, err := c.deploymentLister.Deployments(ns).Get()
+
+	svc := corev1.Service{}
+
+	_, err := c.clientSet.CoreV1().Services(ns).Create(ctx, &svc, metav1.CreateOptions{})
+
+	if err != nil {
+		fmt.Printf("Error creating service : %s\n", err.Error())
+	}
+
+	return nil
+}
+func (c *controller) handleAdd(obj interface{}) {
 
 	fmt.Println("Add was called")
 
+	c.queue.Add(obj)
+
 }
 
-func handleDel(obj interface{}) {
+func (c *controller) handleDel(obj interface{}) {
 
 	fmt.Println("Delete was called")
+
+	c.queue.Add(obj)
 }
