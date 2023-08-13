@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -74,6 +75,8 @@ func (c *controller) processItem() bool {
 		return false
 	}
 
+	defer c.queue.Forget(item)
+
 	key, err := cache.MetaNamespaceKeyFunc(item)
 
 	if err != nil {
@@ -89,6 +92,8 @@ func (c *controller) processItem() bool {
 
 	err = c.syncDeployment(ns, name)
 
+	return true
+
 }
 
 func (c *controller) syncDeployment(ns, name string) error {
@@ -96,11 +101,29 @@ func (c *controller) syncDeployment(ns, name string) error {
 	// create service
 	ctx := context.Background()
 
-	deployment, err := c.deploymentLister.Deployments(ns).Get()
+	deployment, err := c.deploymentLister.Deployments(ns).Get(name)
 
-	svc := corev1.Service{}
+	if err != nil {
+		fmt.Printf("Error getting deployment from lister. namespace - %s and deployment name - %s \n", ns, name)
+	}
 
-	_, err := c.clientSet.CoreV1().Services(ns).Create(ctx, &svc, metav1.CreateOptions{})
+	svc := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      deployment.Name,
+			Namespace: ns,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: deplLabels(*deployment),
+			Ports: []corev1.ServicePort{
+				{
+					Name: "http",
+					Port: 80,
+				},
+			},
+		},
+	}
+
+	_, err = c.clientSet.CoreV1().Services(ns).Create(ctx, &svc, metav1.CreateOptions{})
 
 	if err != nil {
 		fmt.Printf("Error creating service : %s\n", err.Error())
@@ -108,6 +131,11 @@ func (c *controller) syncDeployment(ns, name string) error {
 
 	return nil
 }
+
+func deplLabels(depl appsv1.Deployment) map[string]string {
+	return depl.Spec.Template.Labels
+}
+
 func (c *controller) handleAdd(obj interface{}) {
 
 	fmt.Println("Add was called")
