@@ -15,6 +15,8 @@ import (
 	appslisters "k8s.io/client-go/listers/apps/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 type controller struct {
@@ -89,6 +91,27 @@ func (c *controller) processItem() bool {
 	if err != nil {
 		fmt.Printf("Error splitting key into namespace and name : %s\n", err.Error())
 		return false
+	}
+
+	ctx := context.Background()
+
+	_, err = c.clientSet.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
+
+	if apierrors.IsNotFound(err) {
+		fmt.Printf("handle delete event for deployment : %s\n", name)
+
+		err = c.clientSet.CoreV1().Services(ns).Delete(ctx, name, metav1.DeleteOptions{})
+
+		if err != nil {
+			fmt.Printf("deleting service error: %s\n", err.Error())
+			return false
+		}
+
+		err = c.clientSet.NetworkingV1().Ingresses(ns).Delete(ctx, name, metav1.DeleteOptions{})
+
+		if err != nil {
+			fmt.Printf("Deleting ingress error: %s\n", err.Error())
+		}
 	}
 
 	err = c.syncDeployment(ns, name)
